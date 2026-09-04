@@ -4,20 +4,26 @@ from bs4 import BeautifulSoup
 from feedgen.feed import FeedGenerator
 
 def build_rss_feed():
-    # Insert your free ScraperAPI key here
-    API_KEY = "48071fd1f9e47992b42d1af6dcc9e7c9"
+    API_KEY = "48071fd1f9e47992b42d1af6dcc9e7c9"  # Keep your key inside quotes
     target_url = "https://www.empireonline.com/movies/reviews/"
     
-    # ScraperAPI routes the request through real residential proxies to bypass Cloudflare
-    scraper_url = f"http://api.scraperapi.com?api_key={API_KEY}&url={target_url}&render=true"
+    # render=true forces ScraperAPI to launch a real browser to run Next.js scripts
+    # keep_headers=true and premium=true bypass strict Cloudflare/DataDome blocks
+    scraper_url = "http://api.scraperapi.com"
+    params = {
+        "api_key": API_KEY,
+        "url": target_url,
+        "render": "true",
+        "premium": "true"
+    }
 
     try:
-        response = requests.get(scraper_url, timeout=60)
+        response = requests.get(scraper_url, params=params, timeout=120)
         if response.status_code != 200:
-            print(f"ScraperAPI Error: {response.status_code}")
+            print(f"ScraperAPI HTTP Error: {response.status_code}")
             return
     except Exception as e:
-        print(f"Request failed: {e}")
+        print(f"Connection failed: {e}")
         return
 
     soup = BeautifulSoup(response.text, "html.parser")
@@ -30,19 +36,21 @@ def build_rss_feed():
 
     seen_links = set()
 
-    # Parse review links and descriptions
+    # Find rendered anchor tags containing review links
     for link_tag in soup.find_all("a", href=True):
         href = link_tag["href"]
         
         if "/movies/reviews/" in href and href != "/movies/reviews/":
-            title_tag = link_tag.find(["h2", "h3", "h4", "span"])
+            # Target heading tags rendered inside the link or parent container
+            title_tag = link_tag.find(["h2", "h3", "h4", "p", "span"])
             title_text = title_tag.get_text(strip=True) if title_tag else link_tag.get_text(strip=True)
             
-            parent = link_tag.find_parent(["article", "div"])
+            # Target summary text rendered by JavaScript
+            parent = link_tag.find_parent(["article", "div", "li"])
             desc_tag = parent.find("p") if parent else None
             desc_text = desc_tag.get_text(strip=True) if desc_tag else "Read the full review on Empire Online."
 
-            if len(title_text) > 5 and ("Review" in title_text or len(title_text) > 12):
+            if len(title_text) > 6:
                 link = href if href.startswith("http") else f"https://www.empireonline.com{href}"
                 
                 if link not in seen_links:
@@ -55,6 +63,7 @@ def build_rss_feed():
                     fe.pubDate(datetime.now(timezone.utc))
 
     fg.rss_file("empire_reviews.xml")
+    print(f"Successfully processed {len(seen_links)} items.")
 
 if __name__ == "__main__":
     build_rss_feed()
