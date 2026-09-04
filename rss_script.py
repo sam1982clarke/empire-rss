@@ -1,20 +1,26 @@
 from datetime import datetime, timezone
-import json
-import requests
 from bs4 import BeautifulSoup
 from feedgen.feed import FeedGenerator
+from playwright.sync_api import sync_playwright
 
 def build_rss_feed():
     site_url = "https://www.empireonline.com/movies/reviews/"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
     
-    response = requests.get(site_url, headers=headers)
-    if response.status_code != 200:
-        return
+    # Launch a headless Chrome instance to pass Cloudflare and render Next.js
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        
+        try:
+            page.goto(site_url, wait_until="networkidle", timeout=30000)
+            html_content = page.content()
+        except Exception as e:
+            print(f"Error fetching page: {e}")
+            browser.close()
+            return
+        browser.close()
 
-    soup = BeautifulSoup(response.text, "html.parser")
+    soup = BeautifulSoup(html_content, "html.parser")
     fg = FeedGenerator()
     fg.title("Empire Online - Movie Reviews")
     fg.link(href=site_url, rel="alternate")
@@ -24,50 +30,30 @@ def build_rss_feed():
 
     seen_links = set()
 
-    # Locate Next.js raw data payload
-    next_data_tag = soup.find("script", id="__NEXT_DATA__")
-    
-    if next_data_tag and next_data_tag.string:
-        try:
-            payload = json.loads(next_data_tag.string)
-            # Drill into Next.js prop structure to pull article objects
-            props = payload.get("props", {}).get("pageProps", {})
+    # Locate review links dynamically rendered by JavaScript
+    for link_tag in soup.find_all("a", href=True):
+        href = link_tag["href"]
+        
+        if "/movies/reviews/" in href and href != "/movies/reviews/":
+            title_tag = link_tag.find(["h2", "h3", "h4", "span"])
+            title_text = title_tag.get_text(strip=True) if title_tag else link_tag.get_text(strip=True)
             
-            # Find list of content items regardless of key naming
-            content_list = []
-            for key in ["content", "articles", "items", "latest"]:
-                if key in props and isinstance(props[key], list):
-                    content_list = props[key]
-                    break
-            
-            # Fallback search if nested under page data
-            if not content_list and "data" in props:
-                content_data = props["data"]
-                if isinstance(content_data, dict):
-                    content_list = content_data.get("content", []) or content_data.get("articles", [])
+            # Find parent article/div wrapper to pull summary text
+            parent = link_tag.find_parent(["article", "div"])
+            desc_tag = parent.find("p") if parent else None
+            desc_text = desc_tag.get_text(strip=True) if desc_tag else "Read the full review on Empire Online."
 
-            for item in content_list:
-                if not isinstance(item, dict):
-                    continue
-                    
-                title = item.get("title") or item.get("headline") or item.get("name")
-                summary = item.get("dek") or item.get("summary") or item.get("description") or item.get("standfirst") or "Read the full review on Empire Online."
-                url_path = item.get("canonicalUrl") or item.get("url") or item.get("slug")
+            if len(title_text) > 5 and ("Review" in title_text or len(title_text) > 12):
+                link = href if href.startswith("http") else f"https://www.empireonline.com{href}"
                 
-                if title and url_path:
-                    link = url_path if url_path.startswith("http") else f"https://www.empireonline.com{url_path}"
-                    
-                    if "/movies/reviews/" in link and link not in seen_links:
-                        seen_links.add(link)
-                        
-                        fe = fg.add_entry()
-                        fe.title(title)
-                        fe.link(href=link)
-                        fe.description(summary)
-                        fe.guid(link, permalink=True)
-                        fe.pubDate(datetime.now(timezone.utc))
-        except Exception as e:
-            print(f"JSON extraction failed: {e}")
+                if link not in seen_links:
+                    seen_links.add(link)
+                    fe = fg.add_entry()
+                    fe.title(title_text)
+                    fe.link(href=link)
+                    fe.description(desc_text)
+                    fe.guid(link, permalink=True)
+                    fe.pubDate(datetime.now(timezone.utc))
 
     fg.rss_file("empire_reviews.xml")
 
