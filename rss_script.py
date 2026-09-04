@@ -1,36 +1,36 @@
 from datetime import datetime, timezone
+import requests
 from bs4 import BeautifulSoup
 from feedgen.feed import FeedGenerator
-from playwright.sync_api import sync_playwright
 
 def build_rss_feed():
-    site_url = "https://www.empireonline.com/movies/reviews/"
+    # Insert your free ScraperAPI key here
+    API_KEY = "48071fd1f9e47992b42d1af6dcc9e7c9"
+    target_url = "https://www.empireonline.com/movies/reviews/"
     
-    # Launch a headless Chrome instance to pass Cloudflare and render Next.js
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        
-        try:
-            page.goto(site_url, wait_until="networkidle", timeout=30000)
-            html_content = page.content()
-        except Exception as e:
-            print(f"Error fetching page: {e}")
-            browser.close()
-            return
-        browser.close()
+    # ScraperAPI routes the request through real residential proxies to bypass Cloudflare
+    scraper_url = f"http://api.scraperapi.com?api_key={API_KEY}&url={target_url}&render=true"
 
-    soup = BeautifulSoup(html_content, "html.parser")
+    try:
+        response = requests.get(scraper_url, timeout=60)
+        if response.status_code != 200:
+            print(f"ScraperAPI Error: {response.status_code}")
+            return
+    except Exception as e:
+        print(f"Request failed: {e}")
+        return
+
+    soup = BeautifulSoup(response.text, "html.parser")
     fg = FeedGenerator()
     fg.title("Empire Online - Movie Reviews")
-    fg.link(href=site_url, rel="alternate")
+    fg.link(href=target_url, rel="alternate")
     fg.description("Latest movie reviews from Empire Online")
     fg.language("en")
     fg.updated(datetime.now(timezone.utc))
 
     seen_links = set()
 
-    # Locate review links dynamically rendered by JavaScript
+    # Parse review links and descriptions
     for link_tag in soup.find_all("a", href=True):
         href = link_tag["href"]
         
@@ -38,7 +38,6 @@ def build_rss_feed():
             title_tag = link_tag.find(["h2", "h3", "h4", "span"])
             title_text = title_tag.get_text(strip=True) if title_tag else link_tag.get_text(strip=True)
             
-            # Find parent article/div wrapper to pull summary text
             parent = link_tag.find_parent(["article", "div"])
             desc_tag = parent.find("p") if parent else None
             desc_text = desc_tag.get_text(strip=True) if desc_tag else "Read the full review on Empire Online."
