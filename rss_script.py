@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import json
 import requests
 from bs4 import BeautifulSoup
 from feedgen.feed import FeedGenerator
@@ -23,44 +24,50 @@ def build_rss_feed():
 
     seen_links = set()
 
-    # Locate article containers directly to grab both title, link, and summary text
-    articles = soup.find_all(["article", "div"], class_=lambda c: c and ("card" in c or "item" in c or "article" in c))
+    # Locate Next.js raw data payload
+    next_data_tag = soup.find("script", id="__NEXT_DATA__")
     
-    # Fallback to general links if containers aren't explicitly class-tagged
-    if not articles:
-        articles = soup.find_all("a", href=True)
+    if next_data_tag and next_data_tag.string:
+        try:
+            payload = json.loads(next_data_tag.string)
+            # Drill into Next.js prop structure to pull article objects
+            props = payload.get("props", {}).get("pageProps", {})
+            
+            # Find list of content items regardless of key naming
+            content_list = []
+            for key in ["content", "articles", "items", "latest"]:
+                if key in props and isinstance(props[key], list):
+                    content_list = props[key]
+                    break
+            
+            # Fallback search if nested under page data
+            if not content_list and "data" in props:
+                content_data = props["data"]
+                if isinstance(content_data, dict):
+                    content_list = content_data.get("content", []) or content_data.get("articles", [])
 
-    for article in articles:
-        # Resolve target link
-        link_tag = article if article.name == "a" else article.find("a", href=True)
-        if not link_tag or not link_tag.get("href"):
-            continue
-            
-        href = link_tag["href"]
-        if "/movies/reviews/" in href and href != "/movies/reviews/":
-            # Extract Title
-            title_tag = article.find(["h2", "h3", "h4"]) or link_tag.find(["h2", "h3", "h4", "span"])
-            title_text = title_tag.get_text(strip=True) if title_tag else link_tag.get_text(strip=True)
-            
-            # Extract Description / Standfirst Text
-            desc_tag = article.find(["p", "div"], class_=lambda c: c and ("description" in c or "dek" in c or "summary" in c or "standfirst" in c))
-            if not desc_tag:
-                desc_tag = article.find("p")
-            
-            desc_text = desc_tag.get_text(strip=True) if desc_tag else "Read the full review on Empire Online."
-
-            if len(title_text) > 5:
-                link = href if href.startswith("http") else f"https://www.empireonline.com{href}"
-                
-                if link not in seen_links:
-                    seen_links.add(link)
+            for item in content_list:
+                if not isinstance(item, dict):
+                    continue
                     
-                    fe = fg.add_entry()
-                    fe.title(title_text)
-                    fe.link(href=link)
-                    fe.description(desc_text)  # Populates [no content] in Feedly
-                    fe.guid(link, permalink=True)
-                    fe.pubDate(datetime.now(timezone.utc))
+                title = item.get("title") or item.get("headline") or item.get("name")
+                summary = item.get("dek") or item.get("summary") or item.get("description") or item.get("standfirst") or "Read the full review on Empire Online."
+                url_path = item.get("canonicalUrl") or item.get("url") or item.get("slug")
+                
+                if title and url_path:
+                    link = url_path if url_path.startswith("http") else f"https://www.empireonline.com{url_path}"
+                    
+                    if "/movies/reviews/" in link and link not in seen_links:
+                        seen_links.add(link)
+                        
+                        fe = fg.add_entry()
+                        fe.title(title)
+                        fe.link(href=link)
+                        fe.description(summary)
+                        fe.guid(link, permalink=True)
+                        fe.pubDate(datetime.now(timezone.utc))
+        except Exception as e:
+            print(f"JSON extraction failed: {e}")
 
     fg.rss_file("empire_reviews.xml")
 
