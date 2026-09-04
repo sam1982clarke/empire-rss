@@ -1,0 +1,31 @@
+name: Update RSS Feed
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Runs automatically every 6 hours
+  workflow_dispatch:       # Allows manual execution
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+          
+      - name: Install Dependencies
+        run: pip install requests beautifulsoup4 feedgen
+        
+      - name: Run Generator
+        run: python rss_script.py
+        
+      - name: Commit and Push XML
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add empire_reviews.xml
+          git commit -m "Auto-update RSS feed" || exit 0
+          git push
