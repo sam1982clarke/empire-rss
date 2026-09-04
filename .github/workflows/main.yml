@@ -2,8 +2,8 @@ name: Update RSS Feed
 
 on:
   schedule:
-    - cron: '0 */6 * * *'  # Runs automatically every 6 hours
-  workflow_dispatch:       # Allows manual execution
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -17,8 +17,10 @@ jobs:
           python-version: '3.x'
           
       - name: Install Dependencies
-        run: pip install requests beautifulsoup4 feedgen
-        
+        run: |
+          pip install playwright beautifulsoup4 feedgen
+          playwright install chromium
+          
       - name: Run Generator
         run: python rss_script.py
         
